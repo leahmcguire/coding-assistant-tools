@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "coding-assistant-tools"
+version = "0.1.0"
+description = "Tools for driving coding assistants with explicit, bounded context."
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.2.152",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+scoped = "scoped.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scoped"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# End-to-end tests drive a real model: slow and billable, so opt in with
+# `pytest -m e2e`.
+addopts = "-m 'not e2e'"
+markers = ["e2e: exercises a real Claude session"]
+
+[tool.ruff]
+line-length = 100

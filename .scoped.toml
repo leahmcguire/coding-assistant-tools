@@ -1,0 +1,10 @@
+# This project's own scoped defaults -- `scoped` with no arguments uses these.
+default_scope     = ["src/scoped"]
+extensions        = [".py", ".md", ".toml"]
+test_command      = ["pytest", "-q"]
+lint_command      = ["ruff", "check"]
+typecheck_command = ["mypy", "--ignore-missing-imports"]
+
+[context]
+claude_md = false
+prompt    = "lean"
