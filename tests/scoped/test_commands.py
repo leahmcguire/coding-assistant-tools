@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from scoped.commands import Action, AppState, handle
-from scoped.config import load
+from scoped.config import ConfigError, load
 from scoped.profile import ContextProfile
 from scoped.scope import Scope
 
@@ -64,6 +64,28 @@ def test_scope_add_injects_only_the_new_files(state: AppState):
     assert "a.py" not in text(action.inject)  # already in context from the first render
 
 
+def test_scope_add_explains_a_missing_path(state: AppState):
+    action = act(state, "/scope add /other")
+    message = text(action.message)
+    assert "could not find '/other'" in message
+    assert "did you mean 'other'?" in message
+    assert action.inject is None
+
+
+def test_scope_add_says_when_already_in_scope(state: AppState):
+    assert "'in_scope' is already in scope" in text(act(state, "/scope add in_scope").message)
+
+
+def test_scope_add_flags_typos_alongside_real_additions(state: AppState):
+    message = text(act(state, "/scope add other nowhere").message)
+    assert message.startswith("+ 2 file(s)")
+    assert "could not find 'nowhere'" in message
+
+
+def test_scope_rm_of_unscoped_path_says_so(state: AppState):
+    assert "nothing removed" in text(act(state, "/scope rm other").message)
+
+
 def test_scope_rm_narrows(state: AppState, repo: Path):
     handle(state, "/scope add other")
     handle(state, "/scope rm other")
@@ -114,6 +136,22 @@ def test_prompt_must_be_valid(state: AppState):
     assert state.profile.prompt == "lean"
 
 
+def test_on_off_settings_reject_other_values(state: AppState):
+    action = act(state, "/context bash yes")
+    assert action.reconnect is False
+    assert "must be on or off" in text(action.message)
+    assert state.profile.bash is False
+
+
+def test_unknown_context_setting_lists_the_choices(state: AppState):
+    message = text(act(state, "/context nope on").message)
+    assert "claude-md" in message and "skills" in message
+
+
+def test_context_setting_without_value_shows_its_choices(state: AppState):
+    assert "lean|preset" in text(act(state, "/context prompt").message)
+
+
 def test_context_with_no_args_reports(state: AppState):
     action = act(state, "/context")
     assert "claude-md=off" in text(action.message)
@@ -144,6 +182,26 @@ def test_config_is_optional(tmp_path: Path):
     cfg = load(tmp_path)
     assert cfg.source is None
     assert cfg.default_scope == []
+
+
+@pytest.mark.parametrize(
+    ("toml", "expected"),
+    [
+        ('default_scope = "src"\n', "default_scope must be a list of strings"),
+        ('secret_guard = "false"\n', "secret_guard must be true or false"),
+        ('max_bytes = "big"\n', "max_bytes must be a whole number"),
+        ("test_command = []\n", "test_command must be a list of strings"),
+        ('[context]\nprompt = "fancy"\n', "context.prompt must be"),
+        ('[context]\nskills = "dataviz"\n', "context.skills must be"),
+        ("default_scope = [\n", "is not valid TOML"),
+    ],
+)
+def test_bad_config_names_the_key(tmp_path: Path, toml: str, expected: str):
+    (tmp_path / ".scoped.toml").write_text(toml)
+    with pytest.raises(ConfigError) as caught:
+        load(tmp_path)
+    assert expected in str(caught.value)
+    assert ".scoped.toml" in str(caught.value)
 
 
 def test_config_is_read(tmp_path: Path):

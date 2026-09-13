@@ -10,6 +10,8 @@ from pathlib import Path
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
+    ClaudeSDKError,
+    CLINotFoundError,
     ResultMessage,
     TextBlock,
     ToolUseBlock,
@@ -48,8 +50,11 @@ class ScopedSession:
         )
         if self.model:
             options.model = self.model
-        self.client = ClaudeSDKClient(options=options)
-        await self.client.connect()
+        # Only keep the client once it is connected, so `close` after a failed
+        # connect has nothing half-started to tear down.
+        client = ClaudeSDKClient(options=options)
+        await client.connect()
+        self.client = client
 
     async def reconnect(self, fresh: bool) -> None:
         """Apply a changed profile.
@@ -82,7 +87,8 @@ class ScopedSession:
             elif isinstance(message, ResultMessage):
                 self.session_id = message.session_id
                 if message.subtype != "success":
-                    note(f"  [{message.subtype}]")
+                    detail = "; ".join(message.errors or [])
+                    note(f"  [{message.subtype}] {detail}".rstrip())
 
     async def close(self) -> None:
         if self.client is not None:
@@ -157,17 +163,36 @@ def build_state(args, cwd: Path) -> tuple[AppState, config_module.Config]:
     return state, cfg
 
 
+def sdk_failure(exc: ClaudeSDKError) -> str:
+    if isinstance(exc, CLINotFoundError):
+        return (
+            "scoped: Claude Code is not installed, or `claude` is not on your PATH. "
+            "Install it, check that `claude` runs in this shell, then try again."
+        )
+    return (
+        f"scoped: the Claude session failed: {exc}\n"
+        "Check that `claude` starts on its own in this directory -- you may need to log in."
+    )
+
+
 async def run(args) -> int:
     cwd = Path.cwd().resolve()
     state, cfg = build_state(args, cwd)
 
     if not state.scope.files:
-        print(
-            "Nothing in scope. Name files or directories, or add a .scoped.toml "
-            "with default_scope.\n",
-            file=sys.stderr,
-        )
-        build_parser().print_usage(sys.stderr)
+        if state.last_scope_args:
+            lines = state.scope.explain(state.last_scope_args)
+            print(
+                "\n".join(line if line.startswith(" ") else f"scoped: {line}" for line in lines),
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Nothing in scope. Name files or directories, or add a .scoped.toml "
+                "with default_scope.\n",
+                file=sys.stderr,
+            )
+            build_parser().print_usage(sys.stderr)
         return 2
 
     body = initial_message(state)
@@ -181,9 +206,8 @@ async def run(args) -> int:
         note(f"{len(state.scope.skipped)} file(s) filtered out -- /filters to see why")
 
     session = ScopedSession(state, cfg.dev, args.model)
-    await session.connect()
-
     try:
+        await session.connect()
         await session.send(body, echo=False)
         if args.one_shot:
             await session.send(args.one_shot)
@@ -213,6 +237,9 @@ async def run(args) -> int:
                 await session.reconnect(action.fresh)
             elif action.inject:
                 await session.send(action.inject, echo=False)
+    except ClaudeSDKError as exc:
+        print(sdk_failure(exc), file=sys.stderr)
+        return 1
     finally:
         await session.close()
 
@@ -221,6 +248,9 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         return asyncio.run(run(args))
+    except config_module.ConfigError as exc:
+        print(f"scoped: {exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         return 130
 

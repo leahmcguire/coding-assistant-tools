@@ -34,6 +34,14 @@ HELP = """\
 """
 
 
+CONTEXT_VALUES = {
+    "claude-md": "on|off",
+    "skills": "all|none|name1,name2",
+    "prompt": "lean|preset",
+    "bash": "on|off",
+}
+
+
 @dataclass
 class AppState:
     scope: Scope
@@ -99,17 +107,24 @@ def _scope(state: AppState, args: list[str]) -> Action:
             return Action(message="usage: /scope add <paths>")
         added = scope.add(targets)
         if not added:
-            return Action(message="nothing new -- already in scope, or filtered out.")
+            return Action(message="nothing added:\n" + "\n".join(scope.explain(targets)))
         preview = render_subset(state, added)
+        # Some targets may have landed while others were typos; say which.
+        missing = scope.explain([t for t in targets if not scope.resolve(t).exists()])
         return Action(
             message=f"+ {len(added)} file(s) (~{estimate_tokens(preview)} tokens). "
-            f"scope: {scope.summary()}",
+            f"scope: {scope.summary()}" + "".join(f"\n{line}" for line in missing),
             inject=f"These files have just been added to your scope:\n\n{preview}",
         )
     if action in {"rm", "remove"}:
         if not targets:
             return Action(message="usage: /scope rm <paths>")
         dropped = scope.remove(targets)
+        if not dropped:
+            return Action(
+                message=f"nothing removed -- no files in scope under {', '.join(targets)}. "
+                "/scope lists what is."
+            )
         return Action(
             message=f"- {len(dropped)} file(s). scope: {scope.summary()}",
             inject=(
@@ -119,7 +134,7 @@ def _scope(state: AppState, args: list[str]) -> Action:
                 else None
             ),
         )
-    return Action(message="usage: /scope [add|rm] <paths>")
+    return Action(message=f"unknown /scope action '{action}'. usage: /scope [add|rm] <paths>")
 
 
 def render_subset(state: AppState, paths: list[Path]) -> str:
@@ -148,8 +163,14 @@ def _context(state: AppState, args: list[str], fresh: bool) -> Action:
         return Action(message=profile.describe())
 
     setting, value = (args[0], args[1] if len(args) > 1 else None)
+    if setting not in CONTEXT_VALUES:
+        return Action(
+            message=f"unknown context setting {setting}. Choose from: {', '.join(CONTEXT_VALUES)}."
+        )
     if value is None:
-        return Action(message=f"usage: /context {setting} <value>")
+        return Action(message=f"usage: /context {setting} {CONTEXT_VALUES[setting]}")
+    if setting in {"claude-md", "bash"} and value not in {"on", "off"}:
+        return Action(message=f"{setting} must be on or off, got '{value}'")
 
     match setting:
         case "claude-md":
@@ -162,7 +183,7 @@ def _context(state: AppState, args: list[str], fresh: bool) -> Action:
             elif value == "preset":
                 profile.prompt = "preset"
             else:
-                return Action(message="prompt must be lean or preset")
+                return Action(message=f"prompt must be lean or preset, got '{value}'")
         case "skills":
             if value == "none":
                 profile.skills = None
@@ -170,8 +191,6 @@ def _context(state: AppState, args: list[str], fresh: bool) -> Action:
                 profile.skills = "all"
             else:
                 profile.skills = [s.strip() for s in value.split(",") if s.strip()]
-        case _:
-            return Action(message=f"unknown context setting {setting}. /help for the list.")
 
     return Action(
         reconnect=True,
@@ -202,6 +221,9 @@ def _filters(state: AppState, args: list[str]) -> Action:
         state.scope.files.clear()
         state.scope.skipped.clear()
         state.scope.add(state.last_scope_args)
-        return Action(message=f"extension filter updated. scope: {state.scope.summary()}")
+        message = f"extension filter updated. scope: {state.scope.summary()}"
+        if not state.scope.files:
+            message += " -- nothing matches this filter; /filters shows why each file was skipped"
+        return Action(message=message)
 
     return Action(message="usage: /filters [ext .py,.md]")
