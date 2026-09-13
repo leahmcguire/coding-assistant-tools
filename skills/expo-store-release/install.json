@@ -1,0 +1,12 @@
+{
+  "deny": [
+    "Bash(eas build:*)",
+    "Bash(eas submit:*)",
+    "Bash(eas update:*)",
+    "Bash(eas credentials:*)",
+    "Bash(npx eas:*)",
+    "Bash(npx eas-cli:*)",
+    "Bash(npm exec eas-cli:*)",
+    "Bash(*store-release.sh*)"
+  ]
+}

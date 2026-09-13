@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.7
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        # mypy runs in pre-commit's own virtualenv, so it only sees the
+        # third-party packages listed here -- keep in step with pyproject.toml.
+        additional_dependencies:
+          - claude-agent-sdk>=0.2.152
+          - pytest>=8.0
+          - pytest-asyncio
+
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.5.13
+    hooks:
+      - id: biome-check
+        # Keep in step with `rev` above; `pre-commit autoupdate` does not bump this.
+        additional_dependencies: ["@biomejs/biome@2.5.13"]
+
+  # Regenerate the lock files whenever pyproject.toml changes.
+  - repo: https://github.com/jazzband/pip-tools
+    rev: v7.6.1
+    hooks:
+      - id: pip-compile
+        name: pip-compile requirements.txt
+        args: [--strip-extras, --output-file=requirements.txt, pyproject.toml]
+        files: ^(pyproject\.toml|requirements\.txt)$
+      - id: pip-compile
+        name: pip-compile requirements-dev.txt
+        args: [--extra=dev, --strip-extras, --output-file=requirements-dev.txt, pyproject.toml]
+        files: ^(pyproject\.toml|requirements-dev\.txt)$

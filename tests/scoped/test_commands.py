@@ -4,10 +4,22 @@ from pathlib import Path
 
 import pytest
 
-from scoped.commands import AppState, handle
+from scoped.commands import Action, AppState, handle
 from scoped.config import load
 from scoped.profile import ContextProfile
 from scoped.scope import Scope
+
+
+def act(state: AppState, line: str) -> Action:
+    """Run a line that must be a command."""
+    action = handle(state, line)
+    assert action is not None
+    return action
+
+
+def text(value: str | None) -> str:
+    assert value is not None
+    return value
 
 
 @pytest.fixture
@@ -32,24 +44,24 @@ def test_plain_text_is_not_a_command(state: AppState):
 
 
 def test_unknown_command_is_reported(state: AppState):
-    action = handle(state, "/nope")
-    assert action is not None and "unknown command" in action.message
+    action = act(state, "/nope")
+    assert "unknown command" in text(action.message)
 
 
 # -- scope commands take effect immediately, no reconnect --------------------
 
 
 def test_scope_add_widens_without_reconnecting(state: AppState, repo: Path):
-    action = handle(state, "/scope add other")
+    action = act(state, "/scope add other")
     assert action.reconnect is False
     assert state.scope.contains(repo / "other" / "b.py")
-    assert "just been added" in action.inject
+    assert "just been added" in text(action.inject)
 
 
 def test_scope_add_injects_only_the_new_files(state: AppState):
-    action = handle(state, "/scope add other")
-    assert "b.py" in action.inject
-    assert "a.py" not in action.inject  # already in context from the first render
+    action = act(state, "/scope add other")
+    assert "b.py" in text(action.inject)
+    assert "a.py" not in text(action.inject)  # already in context from the first render
 
 
 def test_scope_rm_narrows(state: AppState, repo: Path):
@@ -59,31 +71,31 @@ def test_scope_rm_narrows(state: AppState, repo: Path):
 
 
 def test_unscope_and_rescope_flip_the_mode(state: AppState):
-    action = handle(state, "/unscope")
+    action = act(state, "/unscope")
     assert state.scope.mode == "open"
-    assert "does not retract" in action.message  # the honest caveat is surfaced
+    assert "does not retract" in text(action.message)  # the honest caveat is surfaced
     handle(state, "/rescope")
     assert state.scope.mode == "strict"
 
 
 def test_scope_shows_the_manifest(state: AppState):
-    action = handle(state, "/scope")
-    assert "a.py" in action.message
-    assert "tokens" in action.message
+    action = act(state, "/scope")
+    assert "a.py" in text(action.message)
+    assert "tokens" in text(action.message)
 
 
 # -- context commands need a reconnect ---------------------------------------
 
 
 def test_context_toggle_requests_a_reconnect(state: AppState):
-    action = handle(state, "/context claude-md on")
+    action = act(state, "/context claude-md on")
     assert action.reconnect is True
     assert action.fresh is False
     assert state.profile.claude_md is True
 
 
 def test_fresh_flag_is_passed_through(state: AppState):
-    action = handle(state, "/context claude-md on --fresh")
+    action = act(state, "/context claude-md on --fresh")
     assert action.reconnect is True and action.fresh is True
 
 
@@ -97,14 +109,14 @@ def test_skills_values(state: AppState):
 
 
 def test_prompt_must_be_valid(state: AppState):
-    action = handle(state, "/context prompt nonsense")
+    action = act(state, "/context prompt nonsense")
     assert action.reconnect is False
     assert state.profile.prompt == "lean"
 
 
 def test_context_with_no_args_reports(state: AppState):
-    action = handle(state, "/context")
-    assert "claude-md=off" in action.message
+    action = act(state, "/context")
+    assert "claude-md=off" in text(action.message)
 
 
 # -- filters -----------------------------------------------------------------
@@ -121,8 +133,8 @@ def test_filters_ext_re_expands_the_scope(state: AppState, repo: Path):
 def test_filters_reports_why_files_were_skipped(state: AppState, repo: Path):
     (repo / "in_scope" / ".env").write_text("K=v\n")
     state.scope.add(["in_scope"])
-    action = handle(state, "/filters")
-    assert "secret" in action.message
+    action = act(state, "/filters")
+    assert "secret" in text(action.message)
 
 
 # -- config ------------------------------------------------------------------

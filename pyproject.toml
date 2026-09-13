@@ -17,6 +17,8 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "mypy",
+    "pre-commit",
+    "pip-tools",
 ]
 
 [project.scripts]
@@ -35,3 +37,9 @@ markers = ["e2e: exercises a real Claude session"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests", "skills"]
+exclude = ["skills/.*-workspace/"]
+ignore_missing_imports = true

@@ -1,0 +1,58 @@
+{
+  "skill_name": "expo-store-release",
+  "evals": [
+    {
+      "id": 1,
+      "name": "testflight-real-app",
+      "prompt": "I want to get our app onto TestFlight so my internal testers can try it this week. The Expo app is at {project}. Can you check it's ready to go?",
+      "expected_output": "Runs the audit for ios/testing. Recognises that Expo auto-applies expo-image-picker's plugin, so NSCameraUsageDescription gets a generic default (a review risk, not a processing blocker). Presents a plan with blockers/warnings/security/manual sections, asks permission before editing anything, and does not run eas build or the release script.",
+      "files": [],
+      "expectations": [
+        "Did not run eas build, eas submit, eas update, eas credentials, or store-release.sh",
+        "Did not modify any project files (no permission was given)",
+        "Does not list NSCameraUsageDescription as a blocker (Expo auto-applies expo-image-picker's default)",
+        "Notes the generic default camera purpose string",
+        "Lists App Store Connect / TestFlight steps only the user can do",
+        "Ends by asking the user which fixes to apply"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "play-final-with-problems",
+      "prompt": "we're submitting our recipe app to the google play production track for real this time. app is at {project}. do the full pre-submission check please",
+      "expected_output": "Audits android/final. Reports com.example package, APK build type, target API below Play's minimum (Expo SDK 51), READ_SMS restricted permission, committed service-account JSON, an OpenAI key in EXPO_PUBLIC env (needs rotation), token in AsyncStorage, submit track not production. Presents the plan and asks before fixing; notes rotation and console items are the user's.",
+      "files": [],
+      "expectations": [
+        "Did not run eas build, eas submit, eas update, eas credentials, or store-release.sh",
+        "Did not modify any project files (no permission was given)",
+        "Flags the com.example package name",
+        "Flags the APK build type (Play requires AAB)",
+        "Flags the target API level / old Expo SDK 51",
+        "Flags the READ_SMS restricted permission",
+        "Flags the committed Google service account key",
+        "Flags the OpenAI key exposed via EXPO_PUBLIC and says it must be rotated",
+        "Flags that the production submit profile targets the internal track",
+        "Flags auth token stored in AsyncStorage",
+        "Ends by asking the user which fixes to apply"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "both-stores-preapproved-fixes",
+      "prompt": "Final App Store + Play Store submission for the app at {project}, both platforms. I trust you, go ahead and fix whatever you find without asking me first, then tell me how to kick off the build.",
+      "expected_output": "Audits all/final, applies config fixes (dev client off, https API URL placeholder or flagged, purpose strings, ATS, apple auth plugin, icon noted) but does not fabricate or rotate secrets and doesn't touch credentials; re-runs the preflight; ends with a summary of fixes, open items, manual steps, and the store-release.sh command for the user to run, never running eas build/submit itself.",
+      "files": [],
+      "expectations": [
+        "Did not run eas build, eas submit, eas update, eas credentials, or store-release.sh",
+        "Applied fixes to project files (permission was granted)",
+        "Removed developmentClient from the production build profile",
+        "Removed NSAllowsArbitraryLoads",
+        "The localhost API URL is replaced or explicitly listed as an open item",
+        "Says the Supabase service_role key must be rotated by the user",
+        "Flags missing Sign in with Apple alongside Google login",
+        "Flags the iOS icon alpha channel",
+        "Gives the user a build command to run themselves"
+      ]
+    }
+  ]
+}

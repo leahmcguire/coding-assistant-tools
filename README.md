@@ -5,6 +5,9 @@ Tools for driving coding assistants with explicit, bounded context.
 First tool: **`scoped`** — a Claude Code-style REPL where the working set is
 exactly the files you named, and nothing else gets in without you saying so.
 
+Also: Claude Code **skills** under `skills/`, installed per project with
+`install-skill.sh` (see [Skills](#skills)).
+
 ## Why
 
 Stock Claude Code decides for itself what to read. Two mechanisms put context in
@@ -211,9 +214,59 @@ The e2e suite is the one that matters: it drives a real model and asserts the
 bytes never reach the transcript. Unit tests can only prove the guard *returns* a
 denial — the `can_use_tool` approach passed unit tests and enforced nothing.
 
+## Lint, lock files, and pre-commit hooks
+
+Commits run ruff (lint + format), mypy, and Biome (the committed JSON files)
+through [pre-commit](https://pre-commit.com). Dependencies are pinned with
+pip-tools: `requirements.txt` (runtime) and `requirements-dev.txt` (runtime +
+`dev` extras) are compiled from `pyproject.toml`, and a hook recompiles them
+whenever `pyproject.toml` changes.
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt && .venv/bin/pip install -e . --no-deps
+.venv/bin/pre-commit install           # once per clone
+.venv/bin/pre-commit run --all-files   # check everything by hand
+```
+
+To change a dependency, edit `pyproject.toml` and commit; the hook updates the
+lock files (re-stage them and commit again). To upgrade pins:
+
+```bash
+.venv/bin/pip-compile --upgrade --strip-extras -o requirements.txt pyproject.toml
+.venv/bin/pip-compile --upgrade --extra=dev --strip-extras -o requirements-dev.txt pyproject.toml
+```
+
+Biome's npm version is pinned twice in `.pre-commit-config.yaml` (`rev` and
+`additional_dependencies`); `pre-commit autoupdate` only bumps the first.
+
 ## Limits
 
 - Not a sandbox and not a security boundary against a hostile model. It is a
   context-discipline tool; the secret guard is a guardrail against accidents.
 - No ad-hoc commands. When you need one, use `claude` — or add a fourth typed
   tool, which is how this is meant to grow.
+
+## Skills
+
+Claude Code skills live in `skills/<name>/` (a `SKILL.md` plus optional
+`references/` and `scripts/`). They are installed per project, as a symlink, so
+edits here take effect everywhere they're linked:
+
+```bash
+./install-skill.sh expo-store-release ~/Code/someproject
+./install-skill.sh --uninstall expo-store-release ~/Code/someproject
+```
+
+The installer links `.claude/skills/<name>` in the target, adds that path to the
+target's `.git/info/exclude` (local-only, nothing to commit), and merges any
+`deny` permission rules from the skill's `install.json` into the target's
+`.claude/settings.json`. Uninstall removes all three.
+
+| Skill | What it does |
+|---|---|
+| `expo-store-release` | Audits an Expo/EAS app for the App Store and Google Play (Apple and Google requirements, security review, testing vs final submission), presents findings as a plan, applies only approved fixes, and hands you the build command. The agent never builds or submits: `install.json` denies `eas build/submit/update/credentials`, and `scripts/store-release.sh` refuses to run inside an agent session or without a terminal. |
+
+`skills/expo-store-release/scripts/preflight.py` is the skill's read-only,
+offline checker (stdlib only); `tests/test_expo_store_release.py` covers it and
+the installer. Eval runs from skill-creator go in `skills/*-workspace/`
+(gitignored).
