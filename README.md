@@ -30,6 +30,7 @@ CLI as a subprocess via the Agent SDK and inherits that CLI's auth, so if
 
 ```bash
 claude --version         # the CLI: https://claude.com/claude-code
+claude auth status       # "loggedIn": true -- no model call, no tokens
 python3.12 --version     # 3.12 or newer; `brew install python@3.12` on macOS
 ```
 
@@ -74,7 +75,11 @@ scoped src/api -p "what does this module do?"     # the whole path works
 The `-p` form runs one prompt and exits, which is the cheapest way to confirm
 every hop: shell → `scoped` → SDK → `claude` → model. If `--help` works but
 `-p` hangs or errors, the problem is the `claude` CLI or its auth, not `scoped`
-— check `claude -p hello` on its own.
+— check `claude auth status`, then `claude -p hello` on its own.
+
+`scoped` runs `claude auth status` itself at startup and warns if you are
+logged out. That check reads the saved login only, so an expired token or a
+usage limit still first shows up on your first question.
 
 **Update or remove.**
 
@@ -153,6 +158,9 @@ Both are **forward-only**. `/unscope` and `/context claude-md off` do not retrac
 what is already in the transcript. `--fresh` on a `/context` command is the only
 true purge, and it costs you the conversation.
 
+The model is neither kind: the CLI can switch it on a live connection, so
+`/model` needs no reconnect. Start with one using `--model sonnet`.
+
 ## Commands
 
 ```
@@ -167,6 +175,8 @@ true purge, and it costs you the conversation.
 /context prompt lean|preset  lean prompt, or Claude Code's    (reconnects)
 /context bash on|off         expose the Bash tool             (reconnects)
     --fresh on any /context command starts a new session instead of resuming
+/model                       show the model and the ones you can pick
+/model <name|number|default> switch model (live, keeps the conversation)
 /filters                     show filters and what they excluded
 /filters ext .py,.md         change the extension filter and re-expand
 /help, /exit
@@ -206,7 +216,7 @@ never enter the manifest. `--no-secret-guard` if you genuinely need one.
 ## Tests
 
 ```bash
-.venv/bin/pytest              # 81 unit tests
+.venv/bin/pytest              # unit tests (also run by the pre-commit hook)
 .venv/bin/pytest -m e2e       # 7 end-to-end tests, slow and billable
 ```
 
@@ -267,6 +277,6 @@ target's `.git/info/exclude` (local-only, nothing to commit), and merges any
 | `expo-store-release` | Audits an Expo/EAS app for the App Store and Google Play (Apple and Google requirements, security review, testing vs final submission), presents findings as a plan, applies only approved fixes, and hands you the build command. The agent never builds or submits: `install.json` denies `eas build/submit/update/credentials`, and `scripts/store-release.sh` refuses to run inside an agent session or without a terminal. |
 
 `skills/expo-store-release/scripts/preflight.py` is the skill's read-only,
-offline checker (stdlib only); `tests/test_expo_store_release.py` covers it and
+offline checker (stdlib only); `tests/skills/test_expo_store_release.py` covers it and
 the installer. Eval runs from skill-creator go in `skills/*-workspace/`
 (gitignored).

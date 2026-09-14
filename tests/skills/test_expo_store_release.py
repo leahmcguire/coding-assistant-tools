@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills" / "expo-store-release"
 
 

@@ -43,6 +43,12 @@ def test_plain_text_is_not_a_command(state: AppState):
     assert handle(state, "why is this broken?") is None
 
 
+@pytest.mark.parametrize("line", ["/exit", "/quit", "exit", "quit", "EXIT", "exit()", "quit()"])
+def test_exit_quits_with_or_without_a_slash(state: AppState, line: str):
+    action = handle(state, line)
+    assert action is not None and action.quit
+
+
 def test_unknown_command_is_reported(state: AppState):
     action = act(state, "/nope")
     assert "unknown command" in text(action.message)
@@ -155,6 +161,53 @@ def test_context_setting_without_value_shows_its_choices(state: AppState):
 def test_context_with_no_args_reports(state: AppState):
     action = act(state, "/context")
     assert "claude-md=off" in text(action.message)
+
+
+# -- model switches live, no reconnect ---------------------------------------
+
+MODELS = [
+    {"value": "default", "displayName": "Default (recommended)", "description": "Opus 5"},
+    {"value": "sonnet", "displayName": "Sonnet", "description": "Fast"},
+]
+
+
+def test_model_lists_the_choices_and_marks_the_current_one(state: AppState):
+    state.models = MODELS
+    state.active_model = "claude-opus-5"
+    message = text(act(state, "/model").message)
+    assert "last reply from: claude-opus-5" in message
+    assert "* 1. default" in message
+    assert "  2. sonnet" in message
+
+
+def test_model_before_connecting_says_names_still_work(state: AppState):
+    assert "a name or alias works" in text(act(state, "/model").message)
+
+
+def test_model_by_name_switches_without_reconnecting(state: AppState):
+    action = act(state, "/model sonnet")
+    assert action.set_model and not action.reconnect
+    assert state.model == "sonnet"
+
+
+def test_model_by_number_picks_from_the_list(state: AppState):
+    state.models = MODELS
+    handle(state, "/model 2")
+    assert state.model == "sonnet"
+
+
+def test_model_default_clears_the_override(state: AppState):
+    state.model = "sonnet"
+    action = act(state, "/model default")
+    assert action.set_model and state.model is None
+
+
+def test_model_number_out_of_range_changes_nothing(state: AppState):
+    state.models = MODELS
+    action = act(state, "/model 9")
+    assert not action.set_model
+    assert "no model #9" in text(action.message)
+    assert state.model is None
 
 
 # -- filters -----------------------------------------------------------------
