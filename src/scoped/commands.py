@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .preview import PreviewConfig, estimate_tokens, render
 from .profile import ContextProfile
@@ -28,10 +29,21 @@ HELP = """\
   /context bash on|off         expose the Bash tool            (reconnects)
       add --fresh to any /context command to start a new session instead of
       resuming, which is the only way to drop what is already in the transcript
-  /filters                     show active file filters
+  /model                       show the model and the ones you can pick
+  /model <name|number|default> switch model (live, keeps the conversation)
+  /filters                    show active file filters
   /filters ext .py,.md         change the extension filter and re-expand
-  /help, /exit
+  /help
+  /exit, exit, Ctrl+D          quit
 """
+
+
+CONTEXT_VALUES = {
+    "claude-md": "on|off",
+    "skills": "all|none|name1,name2",
+    "prompt": "lean|preset",
+    "bash": "on|off",
+}
 
 
 @dataclass
@@ -40,12 +52,19 @@ class AppState:
     profile: ContextProfile
     preview: PreviewConfig = field(default_factory=PreviewConfig)
     last_scope_args: list[str] = field(default_factory=list)
+    # The requested model; None leaves the choice to the CLI.
+    model: str | None = None
+    # What the CLI reports as selectable once connected: value, displayName, description.
+    models: list[dict[str, Any]] = field(default_factory=list)
+    # The model that actually answered the last question.
+    active_model: str | None = None
 
 
 @dataclass
 class Action:
     quit: bool = False
     reconnect: bool = False
+    set_model: bool = False
     fresh: bool = False
     inject: str | None = None
     message: str | None = None
@@ -53,6 +72,10 @@ class Action:
 
 def handle(state: AppState, line: str) -> Action | None:
     """Return None if this is not a command and should go to the model."""
+    # Bare `exit` is what people type in any other REPL; sent to the model it
+    # just gets a polite goodbye and the session carries on.
+    if line.lower().removesuffix("()") in {"exit", "quit"}:
+        return Action(quit=True)
     if not line.startswith("/"):
         return None
 
@@ -82,6 +105,8 @@ def handle(state: AppState, line: str) -> Action | None:
             return Action(message=f"file scope restored: {state.scope.summary()}")
         case "/context":
             return _context(state, args, fresh)
+        case "/model":
+            return _model(state, args)
         case "/filters":
             return _filters(state, args)
         case _:
@@ -99,17 +124,24 @@ def _scope(state: AppState, args: list[str]) -> Action:
             return Action(message="usage: /scope add <paths>")
         added = scope.add(targets)
         if not added:
-            return Action(message="nothing new -- already in scope, or filtered out.")
+            return Action(message="nothing added:\n" + "\n".join(scope.explain(targets)))
         preview = render_subset(state, added)
+        # Some targets may have landed while others were typos; say which.
+        missing = scope.explain([t for t in targets if not scope.resolve(t).exists()])
         return Action(
             message=f"+ {len(added)} file(s) (~{estimate_tokens(preview)} tokens). "
-            f"scope: {scope.summary()}",
+            f"scope: {scope.summary()}" + "".join(f"\n{line}" for line in missing),
             inject=f"These files have just been added to your scope:\n\n{preview}",
         )
     if action in {"rm", "remove"}:
         if not targets:
             return Action(message="usage: /scope rm <paths>")
         dropped = scope.remove(targets)
+        if not dropped:
+            return Action(
+                message=f"nothing removed -- no files in scope under {', '.join(targets)}. "
+                "/scope lists what is."
+            )
         return Action(
             message=f"- {len(dropped)} file(s). scope: {scope.summary()}",
             inject=(
@@ -119,7 +151,7 @@ def _scope(state: AppState, args: list[str]) -> Action:
                 else None
             ),
         )
-    return Action(message="usage: /scope [add|rm] <paths>")
+    return Action(message=f"unknown /scope action '{action}'. usage: /scope [add|rm] <paths>")
 
 
 def render_subset(state: AppState, paths: list[Path]) -> str:
@@ -148,8 +180,14 @@ def _context(state: AppState, args: list[str], fresh: bool) -> Action:
         return Action(message=profile.describe())
 
     setting, value = (args[0], args[1] if len(args) > 1 else None)
+    if setting not in CONTEXT_VALUES:
+        return Action(
+            message=f"unknown context setting {setting}. Choose from: {', '.join(CONTEXT_VALUES)}."
+        )
     if value is None:
-        return Action(message=f"usage: /context {setting} <value>")
+        return Action(message=f"usage: /context {setting} {CONTEXT_VALUES[setting]}")
+    if setting in {"claude-md", "bash"} and value not in {"on", "off"}:
+        return Action(message=f"{setting} must be on or off, got '{value}'")
 
     match setting:
         case "claude-md":
@@ -162,7 +200,7 @@ def _context(state: AppState, args: list[str], fresh: bool) -> Action:
             elif value == "preset":
                 profile.prompt = "preset"
             else:
-                return Action(message="prompt must be lean or preset")
+                return Action(message=f"prompt must be lean or preset, got '{value}'")
         case "skills":
             if value == "none":
                 profile.skills = None
@@ -170,14 +208,54 @@ def _context(state: AppState, args: list[str], fresh: bool) -> Action:
                 profile.skills = "all"
             else:
                 profile.skills = [s.strip() for s in value.split(",") if s.strip()]
-        case _:
-            return Action(message=f"unknown context setting {setting}. /help for the list.")
 
     return Action(
         reconnect=True,
         fresh=fresh,
         message=f"{profile.describe()}",
     )
+
+
+def _model(state: AppState, args: list[str]) -> Action:
+    """Unlike context sources, the model can change on a live connection: no reconnect."""
+    if not args:
+        return Action(message=_model_list(state))
+
+    choice = args[0]
+    if choice.isdigit():
+        index = int(choice) - 1
+        if not 0 <= index < len(state.models):
+            return Action(message=f"no model #{choice}. /model lists the choices.")
+        choice = str(state.models[index].get("value"))
+    # "default" is the CLI's own name for no override, and set_model spells it None.
+    state.model = None if choice == "default" else choice
+    return Action(
+        set_model=True,
+        message=f"model: {state.model or 'default'} -- applies from the next question",
+    )
+
+
+def _model_list(state: AppState) -> str:
+    current = state.model or "default"
+    header = f"model: {current}"
+    if state.active_model:
+        header += f"    last reply from: {state.active_model}"
+    lines = [header]
+    if not state.models:
+        lines.append(
+            "  the list of models appears once the session has connected; "
+            "a name or alias works meanwhile, e.g. /model sonnet"
+        )
+        return "\n".join(lines)
+    for number, entry in enumerate(state.models, start=1):
+        value = str(entry.get("value"))
+        marker = "*" if value == current else " "
+        label = entry.get("displayName") or value
+        description = entry.get("description")
+        detail = f" -- {description}" if description else ""
+        lines.append(f" {marker}{number:>2}. {value:<16} {label}{detail}")
+    lines.append("/model <number|name> to switch")
+    return "\n".join(lines)
 
 
 def _filters(state: AppState, args: list[str]) -> Action:
@@ -202,6 +280,9 @@ def _filters(state: AppState, args: list[str]) -> Action:
         state.scope.files.clear()
         state.scope.skipped.clear()
         state.scope.add(state.last_scope_args)
-        return Action(message=f"extension filter updated. scope: {state.scope.summary()}")
+        message = f"extension filter updated. scope: {state.scope.summary()}"
+        if not state.scope.files:
+            message += " -- nothing matches this filter; /filters shows why each file was skipped"
+        return Action(message=message)
 
     return Action(message="usage: /filters [ext .py,.md]")

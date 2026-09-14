@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -107,6 +108,9 @@ class Scope:
         before = {normcase(f) for f in self.files}
         for arg in args:
             path = self.resolve(arg)
+            if not path.exists():
+                self.skipped.append(Skipped(path, "does not exist" + self.slash_hint(arg)))
+                continue
             if path.is_dir():
                 self.roots.add(path)
                 for found in enumerate_dir(path):
@@ -114,6 +118,43 @@ class Scope:
             else:
                 self._offer(path)
         return sorted(f for f in self.files if normcase(f) not in before)
+
+    def slash_hint(self, raw: str | Path) -> str:
+        """Suggest dropping a leading `/` when that names something under cwd.
+
+        `/src/app` is absolute -- it looks at the filesystem root -- which is
+        rarely what someone typing a project path meant.
+        """
+        text = str(raw)
+        relative = text.lstrip("/")
+        if text.startswith("/") and relative and (self.cwd / relative).exists():
+            return f" (did you mean '{relative}'?)"
+        return ""
+
+    def explain(self, targets: Sequence[str | Path], max_skips: int = 20) -> list[str]:
+        """Say, per named path, why it contributed no new files.
+
+        Headline lines are unindented; per-file detail lines start with two spaces.
+        """
+        lines = []
+        for arg in targets:
+            path = self.resolve(arg)
+            if not path.exists():
+                lines.append(f"could not find '{arg}' (looked for {path}){self.slash_hint(arg)}")
+                continue
+            if any(is_under(known, path) for known in self.files):
+                lines.append(f"'{arg}' is already in scope")
+                continue
+            lines.append(f"found no usable files in '{arg}'")
+            # `add` can offer the same file more than once; keep the latest reason.
+            reasons = {skip.path: skip.reason for skip in self.skipped if is_under(skip.path, path)}
+            if not reasons:
+                lines.append("  (nothing there, or everything is gitignored)")
+            for skipped, reason in sorted(reasons.items())[:max_skips]:
+                lines.append(f"  {self.relative(skipped)} -- {reason}")
+            if len(reasons) > max_skips:
+                lines.append(f"  ... and {len(reasons) - max_skips} more")
+        return lines
 
     def remove(self, args: list[str]) -> list[Path]:
         """Narrow the scope. Removing a directory drops everything under it."""

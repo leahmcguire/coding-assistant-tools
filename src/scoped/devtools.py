@@ -58,7 +58,12 @@ async def run_argv(argv: list[str], cwd: str, timeout: int) -> dict[str, Any]:
     retry something that is working correctly.
     """
     if not shutil.which(argv[0]):
-        return _text(f"`{argv[0]}` is not installed or not on PATH.", is_error=True)
+        return _text(
+            f"`{argv[0]}` is not installed or not on PATH. Tell the user: the command comes "
+            "from test_command, lint_command, or typecheck_command in .scoped.toml, or they "
+            "may need to install it in the environment they launched scoped from.",
+            is_error=True,
+        )
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -75,7 +80,11 @@ async def run_argv(argv: list[str], cwd: str, timeout: int) -> dict[str, Any]:
     except TimeoutError:
         process.kill()
         await process.wait()
-        return _text(f"`{argv[0]}` timed out after {timeout}s.", is_error=True)
+        return _text(
+            f"`{argv[0]}` timed out after {timeout}s. Try narrowing `paths`, or tell the user "
+            "they can raise `timeout` in .scoped.toml.",
+            is_error=True,
+        )
 
     body = _tail(stdout.decode("utf-8", errors="replace").strip())
     header = f"$ {' '.join(argv)}\nexit code {process.returncode}"
@@ -106,7 +115,7 @@ def make_dev_tools(scope: Scope, config: DevConfig) -> list[Any]:
             if scope.mode == "strict" and not (scope.contains(path) or scope.under_root(path)):
                 raise PathRejected(
                     f"{scope.relative(path)} is outside the session scope. "
-                    f"Ask me to run `/scope add {scope.relative(path)}` if you need it."
+                    f"Ask the user to run `/scope add {scope.relative(path)}` if you need it."
                 )
             out.append(os.path.relpath(path, scope.cwd))
         return out

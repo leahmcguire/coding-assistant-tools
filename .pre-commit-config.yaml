@@ -17,6 +17,17 @@ repos:
           - pytest>=8.0
           - pytest-asyncio
 
+  # Unit tests only (e2e is deselected in pyproject). Uses the project venv,
+  # since the tests import the installed package and its dependencies.
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: .venv/bin/pytest -q
+        language: system
+        pass_filenames: false
+        types: [python]
+
   - repo: https://github.com/biomejs/pre-commit
     rev: v2.5.13
     hooks:

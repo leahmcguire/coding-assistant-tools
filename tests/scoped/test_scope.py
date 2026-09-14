@@ -143,6 +143,24 @@ def test_add_returns_only_new_files(scope: Scope, repo: Path):
     assert [p.name for p in added] == ["b.py"]
 
 
+def test_missing_path_is_skipped_as_nonexistent(repo: Path):
+    s = Scope(cwd=repo)
+    s.add(["nowhere"])
+    assert not s.files
+    assert [skip.reason for skip in s.skipped] == ["does not exist"]
+
+
+def test_leading_slash_suggests_the_relative_path(repo: Path):
+    s = Scope(cwd=repo)
+    s.add(["/in_scope"])
+    assert not s.files
+    assert s.skipped[0].reason == "does not exist (did you mean 'in_scope'?)"
+
+
+def test_no_slash_hint_when_relative_path_is_also_missing(repo: Path):
+    assert Scope(cwd=repo).slash_hint("/nowhere") == ""
+
+
 def test_parse_extensions():
     assert parse_extensions(".py,md") == {".py", ".md"}
     assert parse_extensions("") is None

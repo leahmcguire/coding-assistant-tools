@@ -86,8 +86,9 @@ def make_guard(scope: Scope, audit: list[str] | None = None) -> HookCallback:
                 return ALLOW
             return _deny(
                 event,
-                "Bash is not available in this session. Use the run_tests, run_lint, "
-                "and run_typecheck tools instead.",
+                "Bash only runs after the user lifts the file scope with /unscope. Use the "
+                "run_tests, run_lint, and run_typecheck tools instead, or ask the user to "
+                "run /unscope if you truly need a shell.",
             )
 
         if tool in ESCAPE_TOOLS:
@@ -137,7 +138,7 @@ def _out_of_scope_message(scope: Scope, path: Path) -> str:
     shown = scope.relative(path)
     return (
         f"{shown} is outside the session scope. Do not try another path or another tool "
-        f"to reach it -- ask me to run `/scope add {shown}` if you need it."
+        f"to reach it -- ask the user to run `/scope add {shown}` if you need it."
     )
 
 
