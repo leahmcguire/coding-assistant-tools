@@ -1,6 +1,6 @@
 ---
 name: expo-store-release
-description: Release gatekeeper for Expo / EAS mobile apps going to TestFlight, the App Store, or Google Play. Use it whenever the user wants to ship, release, submit, or upload the app, asks whether it is ready for TestFlight or App Review, prepares a version or production build, sets up a Play internal testing release, fixes a rejected or stuck upload (ITMS errors, Missing Compliance, icon or purpose-string rejections), asks you to run eas build or eas submit, or wants a security check before shipping, even if they never say audit. It checks Apple and Google Play requirements, reviews mobile security (secrets in EXPO_PUBLIC vars, keystores, cleartext traffic, token storage), distinguishes testing builds from final store submissions, presents findings as a plan, applies only approved fixes, and hands the user the build-and-submit command. It never runs builds or submissions itself. Not for OTA update debugging, CI setup, store listing copy, backend-only reviews, or apps that don't use Expo.
+description: Release gatekeeper for Expo / EAS mobile apps going to TestFlight, the App Store, or Google Play. Use it whenever the user wants to ship, release, submit, or upload the app, asks whether it is ready for TestFlight or App Review, prepares a version or production build, sets up a Play internal testing release, fixes a rejected or stuck upload or an App Review or Beta App Review rejection (ITMS errors, Missing Compliance, 2.1 demo account), asks you to run eas build or eas submit, or wants a security check before shipping, even if they never say audit. It checks Apple and Google Play requirements, reviews mobile security (secrets in EXPO_PUBLIC vars, keystores, cleartext traffic, token storage), distinguishes testing builds from final store submissions, presents findings as a plan, applies only approved fixes, and hands the user the build-and-submit command. It never runs builds or submissions itself. Not for OTA update debugging, CI setup, store listing copy, backend-only reviews, or apps that don't use Expo.
 ---
 
 # Expo store release
@@ -13,6 +13,18 @@ Why this boundary is firm: a build spends paid EAS build minutes and uses up a b
 
 Read-only EAS commands that need the network (`eas whoami`, `eas env:list`, `eas build:list`) are the user's to run too. If you need what they would show, ask the user to run them with `! <command>` so the output lands in the conversation.
 
+## Security comes first
+
+Every fix you propose for a store requirement must leave the app at least as secure as before. Reviewers check that a requirement is met, not how, so the tempting shortcut is often a hole that ships to every user. Don't propose these, and push back if the user asks for them:
+
+- A fixed or hardcoded sign-in code, a reviewer-email check, or a "demo mode" flag in app code or `EXPO_PUBLIC_*` values. The bundle is public.
+- A shared real account or an admin account for reviewers.
+- Blanket `NSAllowsArbitraryLoads`, `usesCleartextTraffic`, or `originWhitelist={['*']}` to get past a network problem.
+- Broad permissions or entitlements added to silence a warning.
+- Auth checks, row-level security, email confirmation, or rate limits turned off so a reviewer or tester can get in.
+
+When the secure fix costs more work than the shortcut, say so and propose the secure one anyway. Every item in the plan carries a `Security impact` line. The reviewer-access pattern for apps without passwords is in `references/security.md`.
+
 ## Workflow
 
 ### 1. Pin down the target
@@ -23,9 +35,10 @@ You need three things before auditing:
 |---|---|---|
 | Platform | `ios`, `android`, `all` | Infer from the request ("TestFlight" means ios, "Play" means android); otherwise ask |
 | Mode | `testing` or `final` | Ask. The two differ a lot; see below |
+| Audience (testing only) | `internal` (App Store Connect team members, Play internal track: not reviewed) or `external` (external TestFlight group or public link, Play closed or open track: reviewed) | Ask. If still unknown, assume `external` |
 | App directory | the folder with `app.json` / `app.config.*` and `eas.json` | Find it; in a monorepo it's rarely the repo root |
 
-- **testing**: the build goes to testers. That means TestFlight (internal or external), a Google Play internal or closed testing track, or an internal-distribution build installed directly on devices. Store-listing work doesn't apply yet, but anything that breaks the build, fails Apple's processing, or crashes on launch still blocks.
+- **testing**: the build goes to testers. That means TestFlight (internal or external), a Google Play internal or closed testing track, or an internal-distribution build installed directly on devices. Store-listing work doesn't apply yet, but anything that breaks the build, fails Apple's processing, or crashes on launch still blocks. **External testing is reviewed.** The first build of each version added to an external TestFlight group or public link goes through Beta App Review, which applies the review guidelines, including a working demo sign-in (2.1(a)). Google reviews closed and open tracks the same way. For an external audience, treat review-guideline findings as blockers.
 - **final**: the build is headed for App Store review or the Play production track. Everything in testing applies, plus review-guideline requirements and the store-console paperwork.
 
 Read `references/build-modes.md` for how each mode maps to build profiles, submit profiles, and tracks. Read it before recommending any `eas.json` change.
@@ -33,8 +46,10 @@ Read `references/build-modes.md` for how each mode maps to build profiles, submi
 ### 2. Run the preflight script
 
 ```bash
-python3 <skill-dir>/scripts/preflight.py --app-dir <app-dir> --platform <ios|android|all> --mode <testing|final>
+python3 <skill-dir>/scripts/preflight.py --app-dir <app-dir> --platform <ios|android|all> --mode <testing|final> --audience <internal|external>
 ```
+
+`--audience` only matters in testing mode and defaults to `external`, the stricter choice.
 
 Add `--build-profile` or `--submit-profile` if the project doesn't use the defaults: `production` for building, and for submitting, `production` in final mode or `testing` in testing mode. Add `--json` if you want to process the findings programmatically.
 
@@ -66,6 +81,7 @@ Use this structure. Keep each item to a few lines. The user decides from this, s
 1. **<title>**: <what is wrong, file:line or config key>
    Why: <what happens if shipped as-is: build fails, Apple rejects processing with ITMS-xxxxx, Play rejects the upload, secret exposed to anyone who unzips the app>
    Fix: <the concrete change you propose>
+   Security impact: <none, or what the fix exposes and how that is contained>
 
 ### Warnings
 (same shape)
@@ -92,6 +108,7 @@ Some fixes aren't yours to make even with approval. Say so in the plan instead o
 
 - Edit the source of truth: `app.json` or `app.config.*`, `eas.json`, and app source. Never edit the generated `ios/` or `android/` folders in a managed (CNG) project, because `expo prebuild` regenerates them on every EAS build and the change silently disappears. If those folders are committed (a bare workflow), editing them is correct. Check `.gitignore` to tell which kind of project it is.
 - Keep changes minimal and match the surrounding style.
+- Check each change against `references/security.md` before calling it done. A change that satisfies a store by weakening auth, network, or permission posture isn't done: undo it and propose the secure version.
 - Re-run `preflight.py` afterwards and confirm the blockers you fixed are gone.
 - Run the project's own lint and tests if it has them (check CLAUDE.md, `package.json` scripts, or a Makefile). A release fix that breaks the test suite isn't done.
 
@@ -113,7 +130,7 @@ End with this structure:
 Run this yourself from the repo root. It re-runs the preflight, shows what it will do, and asks for confirmation:
 
 ```bash
-<path-to-skill>/scripts/store-release.sh --app-dir <app-dir> --platform <p> --mode <m>
+<path-to-skill>/scripts/store-release.sh --app-dir <app-dir> --platform <p> --mode <m> [--audience internal]
 ```
 
 It runs: `eas build --platform <p> --profile <build> --auto-submit-with-profile <submit>`
@@ -124,12 +141,22 @@ It runs: `eas build --platform <p> --profile <build> --auto-submit-with-profile 
 
 For the script path, use the path the user will see from their repo root. If the skill is installed at `.claude/skills/expo-store-release`, give `.claude/skills/expo-store-release/scripts/store-release.sh`. Otherwise give the absolute path of this skill's directory. Include the raw `eas` command so the user knows exactly what the script does. If blockers remain open, say that the script's preflight will stop on them.
 
+## Responding to a rejection
+
+When the user pastes a rejection (Beta App Review, App Review, a Play policy email, or an ITMS processing email):
+
+1. Name the guideline or error code and find it in `references/apple.md` or `references/google.md`.
+2. If the audit should have caught it, say so plainly, so the user knows how far to trust the rest.
+3. Run the normal workflow for that platform and mode (external testing for a Beta App Review rejection), so one fix doesn't hide the next rejection.
+4. Separate code fixes, which need a new build, from store-console fixes, which often don't (demo credentials, review notes, privacy URL). Tell the user which kind each fix is. For 2.1(a) on an app without passwords, both apply, and the code fix follows "Security comes first".
+
 ## Script reference
 
 `scripts/store-release.sh` is written for a person at a terminal:
 
 ```
 store-release.sh --platform ios|android|all --mode testing|final
+                 [--audience internal|external]
                  [--app-dir DIR] [--build-profile NAME] [--submit-profile NAME]
                  [--no-submit] [--message TEXT] [--skip-preflight] [--dry-run]
 ```

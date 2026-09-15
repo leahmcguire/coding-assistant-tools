@@ -7,7 +7,8 @@
 #
 # Usage:
 #   store-release.sh --platform ios|android|all --mode testing|final
-#                    [--app-dir DIR] [--build-profile NAME] [--submit-profile NAME]
+#                    [--audience internal|external] [--app-dir DIR]
+#                    [--build-profile NAME] [--submit-profile NAME]
 #                    [--no-submit] [--message TEXT] [--skip-preflight] [--dry-run]
 set -euo pipefail
 
@@ -26,7 +27,7 @@ refuse_agents() {
 }
 
 usage() {
-  sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' | grep -v '^set -euo'
   exit "${1:-0}"
 }
 
@@ -38,12 +39,13 @@ confirm() {
 
 refuse_agents
 
-platform="" mode="" app_dir="." build_profile="production" submit_profile=""
+platform="" mode="" audience="external" app_dir="." build_profile="production" submit_profile=""
 submit=1 skip_preflight=0 dry_run=0 message=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --platform) platform="${2:-}"; shift 2 ;;
     --mode) mode="${2:-}"; shift 2 ;;
+    --audience) audience="${2:-}"; shift 2 ;;
     --app-dir) app_dir="${2:-}"; shift 2 ;;
     --build-profile) build_profile="${2:-}"; shift 2 ;;
     --submit-profile) submit_profile="${2:-}"; shift 2 ;;
@@ -58,6 +60,7 @@ done
 
 [[ "$platform" =~ ^(ios|android|all)$ ]] || { echo "--platform must be ios, android or all" >&2; exit 2; }
 [[ "$mode" =~ ^(testing|final)$ ]] || { echo "--mode must be testing or final" >&2; exit 2; }
+[[ "$audience" =~ ^(internal|external)$ ]] || { echo "--audience must be internal or external" >&2; exit 2; }
 [[ -f "$app_dir/eas.json" ]] || { echo "no eas.json in $app_dir" >&2; exit 2; }
 command -v python3 >/dev/null || { echo "python3 is required for the preflight" >&2; exit 2; }
 command -v eas >/dev/null || { echo "eas CLI not found: npm install -g eas-cli" >&2; exit 2; }
@@ -71,7 +74,8 @@ if (( submit )); then
 fi
 
 if (( ! skip_preflight )); then
-  preflight_args=(--app-dir . --platform "$platform" --mode "$mode" --build-profile "$build_profile")
+  preflight_args=(--app-dir . --platform "$platform" --mode "$mode" --audience "$audience"
+    --build-profile "$build_profile")
   (( submit )) && preflight_args+=(--submit-profile "$submit_profile")
   set +e
   python3 "$SCRIPT_DIR/preflight.py" "${preflight_args[@]}"
@@ -123,7 +127,11 @@ if (( submit )) && [[ "$platform" != "android" ]]; then
   if [[ "$mode" == "final" ]]; then
     echo "- iOS: App Store tab, attach the build to a version, complete the listing, Submit to App Review."
   else
-    echo "- iOS: TestFlight tab, assign the build to an internal group (external testers need Beta App Review)."
+    echo "- iOS: TestFlight tab, assign the build to an internal group (no review)."
+    if [[ "$audience" == "external" ]]; then
+      echo "- iOS: before adding it to an external group or public link, fill in Test Information and"
+      echo "  Beta App Review Information (demo sign-in credentials). The first build of a version is reviewed."
+    fi
   fi
 fi
 if (( submit )) && [[ "$platform" != "ios" ]]; then

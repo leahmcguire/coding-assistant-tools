@@ -164,6 +164,42 @@ ACCOUNT_DELETION_RE = re.compile(
     r"delete[-_ ]?(my[-_ ]?)?account|deleteAccount|deleteUser|delete[-_ ]user|close[-_ ]account",
     re.IGNORECASE,
 )
+SIGN_IN_RE = re.compile(r"signIn\w*\(|sign[-_ ]in\b|\blog[-_ ]?in\(", re.IGNORECASE)
+SIGN_IN_DEPS = (*SOCIAL_LOGIN_DEPS, "expo-apple-authentication")
+# One-time codes and magic links: a reviewer can't read the demo account's inbox or phone.
+PASSWORDLESS_RE = re.compile(
+    r"signInWithOtp|verifyOtp|(request|send|verify)[-_]?(email[-_]?|sms[-_]?|phone[-_]?)?otp|"
+    r"magic[-_ ]?link|sendSignInLinkToEmail|signInWithPhoneNumber|\botp\b",
+    re.IGNORECASE,
+)
+PASSWORD_SIGNIN_RE = re.compile(
+    r"signInWithPassword|signInWithEmailAndPassword|secureTextEntry|"
+    r"(textContentType|autoComplete)=[\"'](current-)?password[\"']",
+)
+# Store requirements met by weakening auth: a literal code or a reviewer email checked in code
+# ships in the public bundle, where anyone can read it.
+_CODE_NAME = r"(\w*(otp|passcode|token)\w*|\w*(verif|auth|login|signin|sign_in)\w*code\w*|pin)"
+_CODE_LITERAL = r"[\"'`]\d{4,8}[\"'`]"
+_REVIEW_EMAIL = r"[\"'`][^\"'`\s]*(review|demo|appstore|apple[-_.]?test)[^\"'`\s]*@[^\"'`\s]+[\"'`]"
+REVIEW_BYPASS_RE = re.compile(
+    rf"\b{_CODE_NAME}\s*[!=]==?\s*{_CODE_LITERAL}|{_CODE_LITERAL}\s*[!=]==?\s*{_CODE_NAME}\b|"
+    rf"[!=]==?\s*{_REVIEW_EMAIL}|{_REVIEW_EMAIL}\s*[!=]==?",
+    re.IGNORECASE,
+)
+# Exact package names, or prefixes when the entry ends in "/" or "-".
+AI_SDK_DEPS = (
+    "openai",
+    "@anthropic-ai/",
+    "@google/generative-ai",
+    "@google/genai",
+    "ai",
+    "@ai-sdk/",
+    "@aws-sdk/client-bedrock-",
+    "@mistralai/",
+    "groq-sdk",
+    "cohere-ai",
+    "replicate",
+)
 
 RESTRICTED_ANDROID_PERMISSIONS = {
     "READ_SMS": "SMS and Call Log policy",
@@ -464,6 +500,7 @@ class Context:
     app_dir: Path
     platforms: set[str]
     mode: str
+    audience: str
     expo: dict[str, Any]
     config_label: str
     eas: dict[str, Any] | None
@@ -484,6 +521,11 @@ class Context:
     @property
     def store_bound(self) -> bool:
         return (self.build_profile or {}).get("distribution", "store") != "internal"
+
+    @property
+    def reviewed(self) -> bool:
+        """A store reviewer will open this build: final, or testing with external testers."""
+        return self.store_bound and (self.final or self.audience == "external")
 
     def sev(self, final: str, testing: str) -> str:
         return final if self.final else testing
@@ -540,6 +582,7 @@ def build_context(args: argparse.Namespace) -> Context:
         app_dir=app_dir,
         platforms=platforms,
         mode=args.mode,
+        audience=args.audience,
         expo=expo,
         config_label=config_label,
         eas=eas if isinstance(eas, dict) else None,
@@ -772,12 +815,15 @@ def check_env(ctx: Context, report: Report) -> None:
         )
 
 
-def check_account_deletion(ctx: Context, report: Report) -> None:
-    creates = any(
+def creates_accounts(ctx: Context) -> bool:
+    return any(
         ACCOUNT_CREATION_RE.search(text) or re.search(r"sign-?up|register", rel, re.IGNORECASE)
         for rel, text in ctx.sources
     )
-    if not creates:
+
+
+def check_account_deletion(ctx: Context, report: Report) -> None:
+    if not creates_accounts(ctx):
         return
     if any(ACCOUNT_DELETION_RE.search(text) for _, text in ctx.sources):
         report.passed.append(
@@ -794,6 +840,89 @@ def check_account_deletion(ctx: Context, report: Report) -> None:
         "web deletion URL.",
         fix="Confirm by searching the settings or profile screen; if absent, add a delete-account "
         "flow backed by a server endpoint.",
+    )
+
+
+def check_review_access(ctx: Context, report: Report) -> None:
+    """Reviewers must be able to sign in (Apple 2.1(a), Play App access)."""
+    if not ctx.store_bound:
+        return
+    if ctx.reviewed:
+        report.add(
+            id="common.review-links",
+            area="common",
+            severity=MANUAL,
+            title="Support and privacy policy URLs must load",
+            detail="Reviewers open the support URL (Apple 1.5) and privacy policy URL (Apple "
+            "5.1.1(i), Play policy) from the store console. A dead link is a common rejection.",
+            fix="The user opens both URLs before submitting.",
+        )
+    passwordless = any(PASSWORDLESS_RE.search(text) for _, text in ctx.sources)
+    signs_in = (
+        passwordless
+        or creates_accounts(ctx)
+        or any(dep in ctx.dependencies for dep in SIGN_IN_DEPS)
+        or any(SIGN_IN_RE.search(text) for _, text in ctx.sources)
+    )
+    if not signs_in:
+        return
+    if not any(PASSWORD_SIGNIN_RE.search(text) for _, text in ctx.sources):
+        kind = "one-time codes or magic links" if passwordless else "social or platform sign-in"
+        scope = (
+            "This build will be reviewed (final, or external testers)."
+            if ctx.reviewed
+            else "Internal testers aren't reviewed, but external testing and final submission are."
+        )
+        report.add(
+            id="common.reviewer-no-password",
+            area="common",
+            severity=BLOCKER if ctx.reviewed else WARNING,
+            title="Reviewers have no way to sign in",
+            detail=f"The app signs users in, but only with {kind}; no password sign-in was found. "
+            "Apple (2.1(a)) wants a demo username and password, and Play App access wants reusable "
+            "credentials that bypass one-time codes. A reviewer can't read the demo account's "
+            f"inbox or phone, so the build is rejected. {scope}",
+            fix="Add a server-side password sign-in enabled only for one allowlisted review "
+            "account (references/security.md, 'Reviewer access for passwordless apps'). Never a "
+            "fixed code, a client-side flag, or credentials in the bundle.",
+        )
+    report.add(
+        id="common.reviewer-credentials",
+        area="common",
+        severity=MANUAL if ctx.reviewed else INFO,
+        title="Enter reviewer credentials in the store console",
+        detail="Apple: TestFlight > Test Information > Beta App Review Information (external "
+        "testing) or the version's App Review Information (final), with 'Sign-in required' ticked. "
+        "Play: App content > App access. The account needs real content and must stay valid "
+        "for the whole review.",
+        fix="The user creates a dedicated, non-admin review account and enters its credentials; "
+        "never a real person's account.",
+    )
+
+
+def ai_sdks(dependencies: dict[str, str]) -> list[str]:
+    return sorted(
+        dep
+        for dep in dependencies
+        if any(dep == p or (p.endswith(("/", "-")) and dep.startswith(p)) for p in AI_SDK_DEPS)
+    )
+
+
+def check_ai_data_sharing(ctx: Context, report: Report) -> None:
+    sdks = ai_sdks(ctx.dependencies)
+    if not ctx.store_bound or not sdks:
+        return
+    report.add(
+        id="common.third-party-ai",
+        area="common",
+        severity=MANUAL,
+        title="Confirm consent before sending personal data to third-party AI",
+        detail=f"{', '.join(sdks)} in package.json. Apple 5.1.2(i) requires disclosing which "
+        "personal data goes to a third-party AI provider and getting explicit permission first; "
+        "the App Privacy label and Play Data safety form must list it. A backend can do this too, "
+        "out of this script's sight.",
+        fix="Find flows that send user text, photos or voice to a model and confirm an in-context "
+        "disclosure naming the provider, with consent before the first send.",
     )
 
 
@@ -1504,16 +1633,29 @@ def check_source_patterns(ctx: Context, report: Report) -> None:
                 fix="Use https:// if the app calls it.",
                 where=f"{rel}:{line_of(text, match.start())}",
             )
-        checks: list[tuple[re.Pattern[str], str, str, str]] = [
+        checks: list[tuple[re.Pattern[str], str, str, str, str]] = [
+            (
+                REVIEW_BYPASS_RE,
+                "security.review-bypass",
+                BLOCKER,
+                "Hardcoded sign-in bypass",
+                (
+                    "The bundle is public: anyone who unpacks the build can read this code or "
+                    "email and sign in. Remove it; give reviewers a server-side allowlisted "
+                    "account (references/security.md)."
+                ),
+            ),
             (
                 ASYNC_STORAGE_TOKEN_RE,
                 "security.asyncstorage-token",
+                WARNING,
                 "Credential stored in AsyncStorage",
                 "AsyncStorage is unencrypted. Use expo-secure-store (Keychain/Keystore) for tokens.",
             ),
             (
                 LOG_SECRET_RE,
                 "security.log-secret",
+                WARNING,
                 "Credential may be logged",
                 "Production console output is readable in device logs. Remove or gate on __DEV__.",
             ),
@@ -1523,6 +1665,7 @@ def check_source_patterns(ctx: Context, report: Report) -> None:
                 (
                     WEBVIEW_WILDCARD_RE,
                     "security.webview-origin",
+                    WARNING,
                     "WebView allows any origin",
                     (
                         "originWhitelist ['*'] lets the WebView navigate anywhere, including to "
@@ -1532,17 +1675,18 @@ def check_source_patterns(ctx: Context, report: Report) -> None:
                 (
                     WEBVIEW_FILE_ACCESS_RE,
                     "security.webview-file-access",
+                    WARNING,
                     "WebView file URL access",
                     "File-URL access flags let loaded content read local files.",
                 ),
             ]
-        for pattern, fid, title, fix in checks:
+        for pattern, fid, severity, title, fix in checks:
             for match in pattern.finditer(text):
                 line = line_of(text, match.start())
                 report.add(
                     id=f"{fid}.{rel}:{line}",
                     area="security",
-                    severity=WARNING,
+                    severity=severity,
                     title=title,
                     detail=f"{rel}:{line}: {match.group(0)[:100]}",
                     fix=fix,
@@ -1640,6 +1784,8 @@ def run_checks(ctx: Context) -> Report:
     check_build_profile(ctx, report)
     check_env(ctx, report)
     check_account_deletion(ctx, report)
+    check_review_access(ctx, report)
+    check_ai_data_sharing(ctx, report)
     if "ios" in ctx.platforms:
         check_apple(ctx, report)
     if "android" in ctx.platforms:
@@ -1657,7 +1803,8 @@ def render_text(ctx: Context, report: Report) -> str:
     distribution = (ctx.build_profile or {}).get("distribution", "store")
     counts = {s: sum(f.severity == s for f in report.findings) for s in SEVERITY_ORDER}
     lines = [
-        f"Expo store preflight: platform={'+'.join(sorted(ctx.platforms))} mode={ctx.mode}",
+        f"Expo store preflight: platform={'+'.join(sorted(ctx.platforms))} mode={ctx.mode}"
+        + ("" if ctx.final else f" audience={ctx.audience}"),
         f"app: {ctx.app_dir}  config: {ctx.config_label}",
         (
             f"build profile: {ctx.build_profile_name} (distribution: {distribution})  "
@@ -1687,6 +1834,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--app-dir", default=".", help="directory holding app.json and eas.json")
     parser.add_argument("--platform", required=True, choices=["ios", "android", "all"])
     parser.add_argument("--mode", required=True, choices=["testing", "final"])
+    parser.add_argument(
+        "--audience",
+        default="external",
+        choices=["internal", "external"],
+        help="testing only: internal (App Store Connect team, Play internal track; not reviewed) "
+        "or external (external TestFlight group or public link, Play closed/open track; reviewed)",
+    )
     parser.add_argument("--build-profile", default="production")
     parser.add_argument(
         "--submit-profile",

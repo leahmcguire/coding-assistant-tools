@@ -38,17 +38,21 @@ EAS-managed credentials (`eas credentials`) are the default and the safest choic
 | Photo and video permissions | `READ_MEDIA_IMAGES` or `READ_MEDIA_VIDEO` are allowed only when broad media access is core. Otherwise use the system photo picker (`expo-image-picker` uses it without the permission) | Check whether `expo-media-library` is really needed |
 | Unused permissions | Expo merges every installed module's permissions into the manifest. Remove unused ones with `android.blockedPermissions` so the Data safety form stays honest and reviews stay simple | Compare module list with actual feature use |
 | Data safety form | Must accurately declare collection and sharing by the app **and its SDKs** (analytics, crash reporting, auth providers) | Inventory SDKs in package.json for the user |
-| Account deletion | Apps with account creation must offer deletion **in the app and** through a **web URL** listed in the Data safety form | In-app: find the settings screen. Web: ask the user for the URL |
+| Account deletion | Apps with account creation must offer deletion **in the app and** through a **web URL** listed in the Data safety form. Reviewers open that URL outside the app | In-app: find the settings screen. Web: ask the user for the URL |
 | Privacy policy | Required for all apps; URL in Play Console and accessible in the app | Search source for a privacy link |
 | Families / target audience | If the target audience includes children, the Families policy applies (ad SDK limits, no precise location) | Ask the user the intended age range |
 | Foreground services | Each `FOREGROUND_SERVICE_*` type needs a declaration and justification (API 34+) | Check merged permissions |
-| Credentials for review | If the app needs sign-in, provide working test credentials under App access | Only the user can supply them |
+| App access | If any part of the app needs sign-in, App content > App access needs credentials that are **reusable, never expire, are in English, and bypass one-time codes and 2-step verification**. Expired or code-only access gets the app rejected | Preflight `common.reviewer-no-password` detects sign-in with no password path. The secure pattern is in `references/security.md`. Only the user can enter the credentials |
+| Data safety accuracy | Google checks the form against the network traffic it observes, so an undeclared SDK (analytics, crash reporting, AI provider) gets flagged | Inventory SDKs in package.json, and mention backend-side sharing |
+| Crashes and broken flows | The pre-launch report runs the app on real devices. Crashes, ANRs, and dead-end core flows are among the most common rejections | Tell the user to read the pre-launch report before promoting a release |
+| Generative AI | Apps that show AI-generated content must prevent restricted content and let users report offensive output | Only if the app shows model output to users |
 
 ## Play Console items only the user can do
 
 **Testing (internal track):**
 - The app must exist in Play Console, and the **first AAB is uploaded by hand**
 - Create an internal testing release and a tester email list; share the opt-in link
+- Closed and open testing tracks are reviewed like production, including App access credentials. Internal testing isn't
 - A Google Service Account with the Play Android Developer API enabled, and its key given to EAS (`eas credentials`), is needed for `eas submit`
 
 **Final (production track):**
@@ -66,3 +70,8 @@ EAS-managed credentials (`eas credentials`) are the default and the safest choic
 - **Google sign-in client IDs**: an Android OAuth client must be registered with the **Play App Signing** SHA-1 (from Play Console), not only the upload key SHA-1. Otherwise sign-in works in internal builds and fails in Play-installed builds. Flag it if Google sign-in is present; only the user can verify it in Google Cloud Console.
 - **Notification permission**: Android 13+ requires runtime `POST_NOTIFICATIONS`. Check the app requests it in context and works when it's denied.
 - **Platform-specific references**: no "App Store" or iOS-only wording shown on Android.
+
+## Sources
+
+- App access requirements: https://support.google.com/googleplay/android-developer/answer/15748846
+- Target API level: https://developer.android.com/google/play/requirements/target-sdk
