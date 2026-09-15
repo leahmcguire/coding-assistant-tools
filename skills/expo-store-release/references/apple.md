@@ -4,7 +4,8 @@ Checks for `--platform ios` and `all`. The preflight script covers what it can d
 
 ## Contents
 - Failures during Apple's processing (block testing and final)
-- Review guidelines (block final)
+- Beta App Review (external TestFlight)
+- Review guidelines (block final and external testing)
 - App Store Connect items only the user can do
 - Judgment checks to do by reading code
 
@@ -37,14 +38,34 @@ These pass `eas build` and then fail after upload, which is the most frustrating
 
 Expo SDK 50+ merges the privacy manifests that modules ship, so most apps need nothing extra. If the app or a non-Expo native dependency uses required-reason APIs, declare them under `ios.privacyManifests` in app.json. After upload, Apple emails ITMS-91053 naming any missing categories. Ask the user whether they've seen that email for an earlier build.
 
-## Review guidelines (block final)
+## Beta App Review (external TestFlight)
+
+Internal testing (App Store Connect team members, up to 100) has no review. Adding a build to an **external group or a public link** sends the first build of each version to Beta App Review. Later builds of that version often skip a full review. `eas submit` never adds a build to a group, so the user triggers the review in App Store Connect.
+
+Beta App Review applies the review guidelines below. In practice it rejects for:
+
+- **2.1(a) no way to sign in.** The Beta App Review Information section needs a username and password for a demo account with real content, with "Sign-in required" ticked. An app that signs in only with one-time codes, magic links, or Sign in with Apple or Google has nothing to enter, so it needs a reviewer path first (`references/security.md`, "Reviewer access for passwordless apps"). A demo video isn't accepted. A built-in demo mode needs Apple's prior approval.
+- **Backend off or unreachable.** The reviewer's device must reach the production API. WAF, bot-fight, or geo rules can block Apple's networks.
+- **Crashes and dead ends** (2.1): placeholder screens and broken links.
+- **Missing Test Information**: what to test, a feedback email, a privacy policy URL, and demo credentials for apps with sign-in.
+
+For team-only testing, keep builds in Internal Testing groups and don't create a public link.
+
+## Review guidelines (block final and external testing)
 
 | Guideline | Requirement | How to check |
 |---|---|---|
 | 4.8 Sign in with Apple | If the app offers any third-party or social login (Google, Facebook), it must also offer Sign in with Apple, or another login meeting 4.8's privacy criteria | Find the sign-in screen; confirm an Apple button renders on iOS. `expo-apple-authentication` must be listed in `plugins` or `ios.usesAppleSignIn: true` must be set, or the entitlement is missing and sign-in fails at runtime |
 | 5.1.1(v) Account deletion | Apps that support account creation must let users start deletion **inside the app** | Find the settings or profile screen. A "contact us to delete" email link isn't enough |
 | 5.1.1(i) Privacy policy | A privacy policy URL in App Store Connect **and** reachable in the app | Search source for a privacy link |
-| 2.1 App completeness | Reviewers must be able to use the app. Login walls need demo credentials in the review notes; no placeholder content, broken links, or "coming soon" screens | Look for TODO or lorem text in user-visible strings and dead-end routes |
+| 2.1(a) Demo account | If the app has sign-in, the review information needs a working username and password for an account with content. It must be reusable (not a one-time code) and valid for the whole review | Preflight `common.reviewer-no-password` detects sign-in with no password path. Confirm by reading the sign-in screens |
+| 2.1 App completeness | Apple's most common rejection (over 40% of unresolved issues): crashes, placeholder content, broken links, "coming soon" screens, backend not running | Look for TODO or lorem text in user-visible strings and dead-end routes. Confirm the store profile's API URL is production |
+| 2.1(b) In-app purchases | IAP items must be complete, visible to the reviewer, and working. Explain any the reviewer can't find in the review notes | Look for `react-native-iap`, `expo-iap`, `react-native-purchases` (RevenueCat) |
+| 1.5 Developer information | The support URL in App Store Connect must load and show a way to contact the developer | Ask the user to open it; don't fetch it |
+| 5.1.1(v) Login only when needed | Features that don't depend on an account must be usable without signing in | Find what sits behind the login wall and flag content that doesn't need it |
+| 5.1.2(i) Third-party AI | Disclose which personal data goes to a third-party AI provider, and get explicit permission before sending it | Preflight flags AI SDKs in package.json. Also check backend routes that forward user text, photos, or voice to a model |
+| 5.1.2 App Privacy label | The App Privacy answers must match what the app **and its SDKs** collect, including crash reporting, analytics, and AI providers | Inventory SDKs for the user |
+| 4.3 Spam | No near-duplicate apps from the same developer, and no template apps with only cosmetic changes | Ask whether similar apps exist on the account |
 | 2.3 Accurate metadata | Screenshots show the real app; no references to other platforms ("Android", "Play Store") in the UI or metadata | `grep -ri "android\|play store"` in user-visible strings; platform-gated code is fine |
 | 3.1.1 In-app purchase | Digital goods or subscriptions must use Apple IAP; no links to external payment for digital content | Look for Stripe checkout or payment web links offering digital features |
 | 4.2 Minimum functionality | Not just a wrapped website | A WebView-only app is at risk |
@@ -59,7 +80,10 @@ List the relevant ones under "Only you can do these" in the plan.
 **Testing (TestFlight):**
 - An App Store Connect app record with this bundle ID must exist before the first `eas submit`
 - Internal testers must be App Store Connect team members with a role
-- External testing: Test Information (what to test, feedback email, privacy policy URL) and Beta App Review
+- External testing (external group or public link) needs:
+  - Test Information: what to test, a feedback email, and a privacy policy URL.
+  - **Beta App Review Information with demo credentials** if sign-in is required. They must stay valid for the whole review.
+  - A reply in App Store Connect after fixing a rejection.
 
 **Final (App Store):**
 - Screenshots: 6.9" iPhone set is required (Apple scales it for smaller sizes); 13" iPad if `supportsTablet`
@@ -77,3 +101,9 @@ List the relevant ones under "Only you can do these" in the plan.
 - **Permissions requested on launch**: Apple prefers requesting in context. Requesting camera or notifications at cold start without explanation is a common rejection reason.
 - **Crash on first launch without network**: reviewers sometimes test on restricted networks. Look for unguarded fetches in root layouts.
 - **Hidden debug UI**: dev menus, feature-flag panels, or "test mode" toggles reachable in production builds (not gated on `__DEV__`).
+
+## Sources
+
+- App Review common issues: https://developer.apple.com/distribute/app-review/
+- App Review Guidelines: https://developer.apple.com/app-store/review/guidelines/
+- TestFlight overview: https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/

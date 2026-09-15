@@ -76,7 +76,7 @@ Every upload needs a build number the store has never seen: `CFBundleVersion` on
 1. EAS uploads the build. App Store Connect shows it as *Processing* for 5–20 minutes.
 2. Apple emails if processing fails (for example ITMS-90683, a missing purpose string). The email names the cause. That build number is burned.
 3. Internal testers: TestFlight tab, then Internal Testing, add testers, assign the build. No review.
-4. External testers: fill in Test Information (what to test, contact email, privacy policy URL), then submit for Beta App Review (usually about a day).
+4. External testers (external group or public link): fill in Test Information (what to test, contact email, privacy policy URL) **and Beta App Review Information with demo sign-in credentials** if the app has sign-in. The first build of each version then goes to Beta App Review (usually about a day). A 2.1(a) rejection here means reviewers couldn't sign in. See `references/apple.md`, "Beta App Review".
 5. TestFlight builds expire after 90 days.
 
 ### iOS, final
@@ -87,6 +87,7 @@ Every upload needs a build number the store has never seen: `CFBundleVersion` on
 ### Android, testing
 1. **The first-ever upload for an app must be done by hand in Play Console.** The Play API can't create an app's first release. Build with `--no-submit`, download the AAB from the EAS build page, and upload it to Testing, then Internal testing. After that, `eas submit` works.
 2. Internal testing: add testers by email list and share the opt-in link. Available within minutes, no review.
+3. Closed and open testing tracks are reviewed, and need App access credentials just like production.
 
 ### Android, final
 1. The production track requires a completed store listing, content rating, target audience, Data safety form, app access instructions (credentials for reviewers), and ads declaration.

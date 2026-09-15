@@ -361,6 +361,78 @@ def test_source_security_patterns(tmp_path: Path, capsys: pytest.CaptureFixture[
     } <= prefixes
 
 
+OTP_AUTH = (
+    "export async function requestEmailOtp(email: string) {}\n"
+    "export async function verifyEmailOtp(email: string, token: string) {}\n"
+)
+
+
+def test_passwordless_sign_in_blocks_reviewed_builds_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_app(tmp_path, files={"services/auth.ts": OTP_AUTH})
+    code, external = findings(root, capsys, platform="ios", mode="testing")
+    _, internal = findings(root, capsys, "--audience", "internal", platform="ios", mode="testing")
+    _, final = findings(root, capsys, "--audience", "internal", platform="ios")
+    assert code == 1
+    assert external["common.reviewer-no-password"] == preflight.BLOCKER
+    assert internal["common.reviewer-no-password"] == preflight.WARNING
+    assert final["common.reviewer-no-password"] == preflight.BLOCKER
+    assert external["common.reviewer-credentials"] == preflight.MANUAL
+    assert internal["common.reviewer-credentials"] == preflight.INFO
+
+
+def test_password_sign_in_leaves_only_the_credentials_step(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = OTP_AUTH + "<TextInput secureTextEntry value={password} />\n"
+    root = make_app(tmp_path, files={"app/sign-in.tsx": source})
+    code, found = findings(root, capsys, platform="ios", mode="testing")
+    assert code == 0, found
+    assert "common.reviewer-no-password" not in found
+    assert found["common.reviewer-credentials"] == preflight.MANUAL
+
+
+def test_internal_distribution_has_no_review_findings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_app(tmp_path, files={"services/auth.ts": OTP_AUTH})
+    _, found = findings(root, capsys, "--build-profile", "preview", mode="testing")
+    assert not [k for k in found if k.startswith(("common.review", "common.third-party-ai"))]
+
+
+def test_hardcoded_review_bypass_blocks(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = (
+        "if (email === 'appreview@example.com') return demoSession();\n"
+        "if (otp === '000000') return demoSession();\n"
+        "if (error.code === '23505') return conflict();\n"
+    )
+    root = make_app(tmp_path, files={"lib/auth.ts": source})
+    _, found = findings(root, capsys, "--audience", "internal", platform="ios", mode="testing")
+    bypass = sorted(k for k in found if k.startswith("security.review-bypass"))
+    assert bypass == [
+        "security.review-bypass.lib/auth.ts:1",
+        "security.review-bypass.lib/auth.ts:2",
+    ]
+    assert all(found[k] == preflight.BLOCKER for k in bypass)
+
+
+def test_ai_sdk_needs_consent_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert preflight.ai_sdks(
+        {"ai": "1", "airbnb-prop-types": "1", "@anthropic-ai/sdk": "1", "openai-ish": "1"}
+    ) == ["@anthropic-ai/sdk", "ai"]
+    root = make_app(tmp_path, deps={"@aws-sdk/client-bedrock-runtime": "3"})
+    _, found = findings(root, capsys, platform="ios", mode="testing")
+    assert found["common.third-party-ai"] == preflight.MANUAL
+
+
+def test_audience_is_validated() -> None:
+    with pytest.raises(SystemExit):
+        preflight.parse_args(["--platform", "ios", "--mode", "testing", "--audience", "everyone"])
+    args = preflight.parse_args(["--platform", "ios", "--mode", "testing"])
+    assert args.audience == "external"
+
+
 def test_dynamic_config_requires_resolved_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -383,6 +455,7 @@ def test_release_script_refuses_agents_before_doing_anything() -> None:
     assert guard_call < text.index('"${cmd[@]}"')
     for marker in ("CLAUDECODE", "AI_AGENT", "-t 0", "-t 1"):
         assert marker in text
+    assert '--audience "$audience"' in text
 
 
 def test_install_script_links_excludes_and_merges_deny(tmp_path: Path) -> None:

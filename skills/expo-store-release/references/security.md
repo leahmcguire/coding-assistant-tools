@@ -6,6 +6,8 @@ Run this for every release, testing or final. A TestFlight or internal-track bui
 - The core fact: the bundle is public
 - Checks the preflight script automates
 - Checks to do by reading code
+- Security comes first in compliance fixes
+- Reviewer access for passwordless apps
 - Reporting security findings
 
 ## The core fact: the bundle is public
@@ -42,6 +44,7 @@ Confirm each hit by reading the file before reporting it.
 - **Logging** of tokens, passwords, or authorization headers
 - **WebView** with `originWhitelist={['*']}` or file-access flags
 - **OTA updates** (`expo-updates`) without code signing
+- **Hardcoded sign-in bypasses**: a literal code compared with an OTP, PIN, or token, or a reviewer or demo email compared in code. Always a blocker
 
 ## Checks to do by reading code
 
@@ -78,6 +81,35 @@ Scope these to what the app actually does. Skip sections that don't apply and sa
 
 ### Permissions (privacy is part of security)
 - Every requested permission should map to a feature. Unused permissions widen the attack surface and must be declared anyway (the Apple privacy label and Google's Data safety form).
+
+## Security comes first in compliance fixes
+
+Store requirements are checklists. Reviewers confirm the box is ticked, not how it was ticked. A fix for a requirement that touches auth, network, permissions, or data sharing gets the same scrutiny as a new feature: who could abuse it, and what would they get? If the answer is "anyone who installs the app", it's the wrong fix. Propose the secure version, even when it's more work, and state its security impact in the plan.
+
+## Reviewer access for passwordless apps
+
+Apple (2.1(a)) wants a username and password. Google Play wants reusable credentials that bypass one-time codes. An app that signs in only with emailed or SMS codes, magic links, or Sign in with Apple or Google has nothing to hand over.
+
+**Recommended: a server-side password sign-in for one allowlisted review account.**
+
+- **Allowlisted on the backend.** The backend exposes a password sign-in (Supabase `signInWithPassword`, Firebase `signInWithEmailAndPassword`). It's enabled only when a review email is set in the **backend** environment, and accepts only that email. Every other email gets the same generic error as a wrong password, so the endpoint reveals nothing.
+- **Long random password.** It is 32+ characters, set in the auth provider's dashboard. It is never stored in the repo, the app bundle, `EXPO_PUBLIC_*` values, or CI logs. The user enters it only in App Store Connect and Play Console.
+- **Rate-limited and logged.** Every use is logged; the password never is.
+- **Ordinary account.** A normal user with its own sample data: no admin role, no access to other users' data, no ability to message real users.
+- **Low-key in the app.** A small "Use a password instead" option on the email step, with review notes telling the reviewer where it is.
+- **Rotated after review.** Once approved, the user rotates the password or unsets the allowlist. Credentials must stay valid while a review is open, so rotate between reviews, never during one.
+
+**Don't:**
+
+| Shortcut | Why it's a hole |
+|---|---|
+| A fixed one-time code (`000000`) for a test email | Six digits can be brute-forced. The logic often lands in the client or the auth config, and it outlives the review |
+| A client-side demo flag, or credentials in the app | The bundle is public; anyone can find and use them |
+| A real person's account or an admin account | Reviewers, and anyone the credentials leak to, get that person's data or admin powers |
+| Turning off one-time codes, email confirmation, or rate limits for everyone | Weakens every account to let one reviewer in |
+| A built-in demo mode without asking Apple | Needs Apple's prior approval under 2.1(a), and a demo mode that skips auth must never reach real data |
+
+The password path is a code change and needs a new build. Creating the account, setting the password and backend environment variable, and entering the credentials in the store consoles are the user's to do.
 
 ## Reporting security findings
 
