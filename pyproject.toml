@@ -9,6 +9,7 @@ description = "Tools for driving coding assistants with explicit, bounded contex
 requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk>=0.2.152",
+    "e2b>=2.50.0",
 ]
 
 [project.optional-dependencies]
@@ -23,9 +24,10 @@ dev = [
 
 [project.scripts]
 scoped = "scoped.cli:main"
+e2b-webtest = "e2b_webtest.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scoped"]
+packages = ["src/scoped", "src/e2b_webtest"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

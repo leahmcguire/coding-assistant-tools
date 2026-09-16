@@ -1,0 +1,17 @@
+# Trivial config for checking that e2b-webtest can reach your E2B account and
+# drive a sandbox end to end, before pointing it at a real project. No upload,
+# no setup steps, no secrets -- just Python's stdlib http.server.
+
+[sandbox]
+template = "e2b-webtest-smoke"
+vcpu = 2
+memory_mb = 1024
+timeout = 900
+
+[[services]]
+name = "http"
+cmd = ["python3", "-m", "http.server", "8000"]
+
+[services.ready]
+http = "http://127.0.0.1:8000/"
+timeout = 15
